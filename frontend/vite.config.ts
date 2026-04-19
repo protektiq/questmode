@@ -1,6 +1,14 @@
 import { defineConfig } from "vite";
 
 export default defineConfig({
-  build: { outDir: "dist" },
+  build: {
+    outDir: "dist",
+    rollupOptions: {
+      input: {
+        main: "index.html",
+        quest: "quest.html",
+      },
+    },
+  },
   server: { proxy: { "/api": "http://localhost:8080" } }, // dev only
 });

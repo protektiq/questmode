@@ -9,9 +9,12 @@ flowchart LR
   fe[frontend_Service]
   be[backend_Service]
   spellingApi[spelling_API_handlers]
+  mathApi[math_API_handlers]
+  mathService[math_Service]
   storyEngine[story_StateManager]
   adminGate[admin_key_check]
   spelling[(spelling_mastery)]
+  mathAttempts[(math_attempts)]
   pg[(postgres)]
   rd[(redis)]
   anthropic[Anthropic_API]
@@ -20,9 +23,14 @@ flowchart LR
   fe --> be
   fe -->|api_spelling_word_check| spellingApi
   fe -->|api_spelling_seed| adminGate
+  fe -->|api_math_problem_check| mathApi
   adminGate --> spellingApi
   spellingApi -->|resolve_latest_session_learner| pg
   spellingApi -->|read_write_words| spelling
+  mathApi -->|select_problem_by_difficulty_genre| mathService
+  mathApi -->|resolve_latest_session_learner| pg
+  mathApi -->|log_attempts_and_hint_progression| mathAttempts
+  mathAttempts --> pg
   be --> storyEngine
   storyEngine -->|save_load_state| rd
   storyEngine -->|flush_progress_metrics| pg
@@ -46,6 +54,7 @@ flowchart LR
 - **Frontend → backend**: In the cluster, nginx proxies `/api/*` to `http://backend:8080/api/*`. The browser can call same-origin `/api/...` (no CORS needed). The backend Service DNS name is `backend.quest-mode.svc` (short name `backend` within the namespace).
 - **Backend → Postgres / Redis**: Connection strings come from the `quest-secrets` Secret (`DATABASE_URL`, `REDIS_URL`). On startup the backend applies SQL migrations from `backend/migrations/` (embedded in the binary) and records them in `schema_migrations`; Kubernetes readiness uses `GET /api/health` on port 8080.
 - **Spelling task API**: `GET /api/spelling/word` and `POST /api/spelling/check` resolve the learner from the latest `quest_sessions` row and read/write progress in `spelling_mastery` (`correct_count`, `hint_count`, `last_seen_at`, `mastered_at`).
+- **Math task API**: `GET /api/math/problem` selects a static problem by difficulty/genre (with frustration downgrade support), and `POST /api/math/check` validates answers, stores attempts in `math_attempts`, and returns progressive feedback (`Hint1` -> `Hint2` -> reveal).
 - **Admin seed protection**: `POST /api/spelling/seed` requires `X-Admin-Key` to match `ADMIN_KEY` before inserting learner words into `spelling_mastery`.
 - **Story state machine**: Story runtime state is cached in Redis using `story:state:{learnerID}` with 24-hour TTL and flushed to `quest_sessions` in Postgres (`tasks_completed`, `engagement_seconds`) by `session_id`.
 - **Postgres Pod**: The `postgres` Deployment mounts data on PVC `quest-postgres-pvc` and sets `POSTGRES_USER`, `POSTGRES_PASSWORD`, and `POSTGRES_DB` from `quest-secrets`. Non-sensitive defaults for user and database name are also recorded in the `postgres-config` ConfigMap (`k8s/postgres/configmap.yaml`); keep them aligned with the Secret when you change credentials.

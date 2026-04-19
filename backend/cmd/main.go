@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -17,6 +18,7 @@ import (
 	"github.com/redis/go-redis/v9"
 	"questmode/backend/internal/claude"
 	"questmode/backend/internal/handlers"
+	questmath "questmode/backend/internal/math"
 	"questmode/backend/internal/migrate"
 	"questmode/backend/internal/spelling"
 )
@@ -27,6 +29,7 @@ const (
 	maxConnStringLen = 2048
 	maxAnswerLen     = 256
 	maxSeedWords     = 500
+	maxGenreLen      = 64
 )
 
 // AppState holds shared infrastructure for HTTP handlers.
@@ -42,6 +45,12 @@ type spellingCheckRequest struct {
 
 type spellingSeedRequest struct {
 	Words []string `json:"words"`
+}
+
+type mathCheckRequest struct {
+	SessionID string `json:"session_id"`
+	ProblemID string `json:"problem_id"`
+	Answer    int    `json:"answer"`
 }
 
 func main() {
@@ -262,6 +271,96 @@ func registerRoutes(router *gin.Engine, state *AppState, storyHandler *handlers.
 			return
 		}
 		c.JSON(http.StatusOK, gin.H{"seeded": true})
+	})
+
+	mathGroup := api.Group("/math")
+	mathGroup.GET("/problem", func(c *gin.Context) {
+		difficulty := strings.TrimSpace(c.Query("difficulty"))
+		genre := strings.TrimSpace(c.Query("genre"))
+		frustratedRaw := strings.TrimSpace(c.Query("frustrated"))
+		frustrated := false
+
+		if genre != "" && len(genre) > maxGenreLen {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "genre exceeds max length"})
+			return
+		}
+
+		if difficulty != "" {
+			switch strings.ToLower(difficulty) {
+			case string(questmath.DiffEasy), string(questmath.DiffMedium), string(questmath.DiffHard):
+			default:
+				c.JSON(http.StatusBadRequest, gin.H{"error": "difficulty must be easy, medium, or hard"})
+				return
+			}
+		}
+
+		if frustratedRaw != "" {
+			parsed, err := strconv.ParseBool(frustratedRaw)
+			if err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "frustrated must be a boolean"})
+				return
+			}
+			frustrated = parsed
+		}
+
+		problem := questmath.GetProblem(questmath.Difficulty(difficulty), genre, frustrated)
+		if problem.ID == "" {
+			c.JSON(http.StatusNotFound, gin.H{"error": "no problem available"})
+			return
+		}
+		c.JSON(http.StatusOK, questmath.PublicProblem(problem))
+	})
+
+	mathGroup.POST("/check", func(c *gin.Context) {
+		var req mathCheckRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
+			return
+		}
+
+		req.SessionID = strings.TrimSpace(req.SessionID)
+		req.ProblemID = strings.TrimSpace(req.ProblemID)
+		if req.SessionID == "" || req.ProblemID == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "session_id and problem_id are required"})
+			return
+		}
+
+		learnerID, err := resolveLatestLearnerID(c.Request.Context(), state.DB)
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				c.JSON(http.StatusNotFound, gin.H{"error": "no session found"})
+				return
+			}
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to resolve learner session"})
+			return
+		}
+
+		result, err := questmath.CheckAnswer(
+			c.Request.Context(),
+			learnerID,
+			req.SessionID,
+			req.ProblemID,
+			req.Answer,
+			state.DB,
+		)
+		if err != nil {
+			switch err.Error() {
+			case "learner_id, session_id, and problem_id are required",
+				"learner_id must be a valid uuid",
+				"session_id must be a valid uuid",
+				"db is required",
+				"problem not found":
+				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+				return
+			}
+			if strings.Contains(err.Error(), "exceeds max length") || strings.Contains(err.Error(), "answer must be between") {
+				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+				return
+			}
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to check math answer"})
+			return
+		}
+		c.JSON(http.StatusOK, result)
 	})
 }
 
