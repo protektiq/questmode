@@ -1,0 +1,16 @@
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  name: quest-mode-pipeline-run-sample
+  namespace: quest-mode
+  labels:
+    app.kubernetes.io/name: quest-tekton-pipelinerun
+spec:
+  pipelineRef:
+    name: quest-mode-pipeline
+  taskRunTemplate:
+    serviceAccountName: default
+  workspaces:
+    - name: shared-ws
+      persistentVolumeClaim:
+        claimName: quest-mode-workspace

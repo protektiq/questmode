@@ -1,0 +1,27 @@
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: quest-mode-pipeline
+  namespace: quest-mode
+  labels:
+    app.kubernetes.io/name: quest-tekton-pipeline
+spec:
+  description: Minimal two-step pipeline using a shared workspace PVC.
+  workspaces:
+    - name: shared-ws
+      description: Bound to quest-mode-workspace in PipelineRun
+  tasks:
+    - name: hello
+      taskRef:
+        name: quest-hello
+      workspaces:
+        - name: source
+          workspace: shared-ws
+    - name: follow-up
+      runAfter:
+        - hello
+      taskRef:
+        name: quest-follow-up
+      workspaces:
+        - name: source
+          workspace: shared-ws

@@ -1,0 +1,19 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: quest-hello
+  namespace: quest-mode
+  labels:
+    app.kubernetes.io/name: quest-tekton-tasks
+spec:
+  description: Writes a greeting into the shared workspace.
+  workspaces:
+    - name: source
+      description: Shared workspace for pipeline steps
+  steps:
+    - name: greet
+      image: alpine:3.20
+      script: |
+        #!/bin/sh
+        set -eu
+        echo "Quest Mode Tekton: hello" | tee "$(workspaces.source.path)/hello.txt"
