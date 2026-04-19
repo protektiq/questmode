@@ -1,17 +1,17 @@
 # syntax=docker/dockerfile:1
-FROM golang:1.22-bookworm AS builder
+FROM cgr.dev/chainguard/go:latest AS builder
 WORKDIR /app
 
-COPY go.mod go.sum* ./
+COPY go.mod go.sum ./
 RUN go mod download
 
-COPY src ./src
-RUN CGO_ENABLED=0 GOOS=linux go build -o /server ./src
+COPY cmd ./cmd
+COPY internal ./internal
+COPY migrations ./migrations
+RUN CGO_ENABLED=0 go build -o /app/backend ./cmd
 
-FROM gcr.io/distroless/base-debian12:nonroot
-WORKDIR /
-COPY --from=builder /server /server
-USER nonroot:nonroot
+FROM cgr.dev/chainguard/glibc-dynamic:latest
+COPY --from=builder /app/backend /usr/local/bin/backend
 EXPOSE 8080
 ENV PORT=8080
-ENTRYPOINT ["/server"]
+ENTRYPOINT ["/usr/local/bin/backend"]

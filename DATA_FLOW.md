@@ -30,7 +30,7 @@ flowchart LR
 
 - **User → frontend**: Browser hits the `frontend` Service (e.g. via `kubectl port-forward` or ingress you add later); nginx serves static assets from the Vite build.
 - **Frontend → backend**: API calls target the `backend` Service DNS name `backend.quest-mode.svc` (or `http://backend:8080` from another pod in the cluster).
-- **Backend → Postgres / Redis**: Connection strings come from the `quest-secrets` Secret (`DATABASE_URL`, `REDIS_URL`).
+- **Backend → Postgres / Redis**: Connection strings come from the `quest-secrets` Secret (`DATABASE_URL`, `REDIS_URL`). On startup the backend applies SQL migrations from `backend/migrations/` (embedded in the binary) and records them in `schema_migrations`; Kubernetes readiness uses `GET /api/health` on port 8080.
 - **Postgres Pod**: The `postgres` Deployment mounts data on PVC `quest-postgres-pvc` and sets `POSTGRES_USER`, `POSTGRES_PASSWORD`, and `POSTGRES_DB` from `quest-secrets`. Non-sensitive defaults for user and database name are also recorded in the `postgres-config` ConfigMap (`k8s/postgres/configmap.yaml`); keep them aligned with the Secret when you change credentials.
 - **Backend → Anthropic**: When implemented, the backend uses `ANTHROPIC_API_KEY` from the same Secret for outbound calls to Anthropic’s API (not shown as in-cluster traffic).
 

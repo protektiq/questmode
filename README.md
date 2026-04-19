@@ -4,7 +4,7 @@ Monorepo: **Go/Gin** backend, **Vite/TypeScript** frontend, **Kubernetes** manif
 
 ## Layout
 
-- `backend/` — Gin HTTP API (`src/`, `go.mod`, `Dockerfile`)
+- `backend/` — Gin HTTP API (`cmd/`, `internal/`, `migrations/`, `go.mod`, `Dockerfile`)
 - `frontend/` — Vite + TypeScript static app (`Dockerfile` serves with nginx)
 - `k8s/` — Namespaced manifests (`quest-mode`), including Postgres, Redis, app Deployments/Services, Tekton, and secrets templates
 - `scripts/` — Helper scripts (e.g. image builds)
@@ -85,7 +85,7 @@ kubectl port-forward -n quest-mode svc/frontend 8081:80
 kubectl port-forward -n quest-mode svc/backend 8082:8080
 ```
 
-Then open `http://127.0.0.1:8081` and `http://127.0.0.1:8082/health`.
+Then open `http://127.0.0.1:8081` and `http://127.0.0.1:8082/api/health`.
 
 ## Tekton (optional)
 
@@ -100,7 +100,7 @@ kubectl apply -f k8s/tekton/pipeline-run.yaml
 
 ## Development (without Kubernetes)
 
-- **Backend**: `cd backend && go run ./src`
+- **Backend**: `cd backend && go run ./cmd` (requires `DATABASE_URL` and `REDIS_URL`, e.g. from a local `.env`)
 - **Frontend**: `cd frontend && npm ci && npm run dev`
 
 ## Data flow
