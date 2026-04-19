@@ -1,0 +1,62 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: fetch-source
+  namespace: quest-mode
+  labels:
+    app: quest-mode-ci
+spec:
+  params:
+    - name: repo-url
+      type: string
+      description: Git repository HTTPS URL
+    - name: revision
+      type: string
+      description: Git branch, tag, or SHA
+      default: main
+  workspaces:
+    - name: source
+  steps:
+    - name: clone
+      image: cgr.dev/chainguard/git:latest
+      workingDir: /workspace/source
+      script: |
+        #!/bin/sh
+        set -eu
+        repo_url="$(params.repo-url)"
+        revision="$(params.revision)"
+
+        if [ "${#repo_url}" -lt 12 ] || [ "${#repo_url}" -gt 300 ]; then
+          echo "invalid repo-url length"
+          exit 1
+        fi
+
+        if [ "${#revision}" -lt 1 ] || [ "${#revision}" -gt 128 ]; then
+          echo "invalid revision length"
+          exit 1
+        fi
+
+        case "$repo_url" in
+          https://*)
+            ;;
+          *)
+            echo "repo-url must be https://"
+            exit 1
+            ;;
+        esac
+
+        case "$revision" in
+          *[!A-Za-z0-9._/-]*)
+            echo "revision has invalid characters"
+            exit 1
+            ;;
+        esac
+
+        git config --global --add safe.directory /workspace/source
+        git init /workspace/source
+        git -C /workspace/source remote remove origin >/dev/null 2>&1 || true
+        git -C /workspace/source clean -fdx
+        git -C /workspace/source reset --hard
+        git -C /workspace/source remote add origin "$repo_url"
+        git -C /workspace/source fetch --depth=1 origin "$revision"
+        git -C /workspace/source checkout -f FETCH_HEAD

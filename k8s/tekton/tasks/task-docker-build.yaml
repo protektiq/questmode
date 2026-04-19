@@ -1,0 +1,35 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: docker-build
+  namespace: quest-mode
+  labels:
+    app: quest-mode-ci
+spec:
+  workspaces:
+    - name: source
+  steps:
+    - name: build-backend
+      image: cgr.dev/chainguard/docker-dind:latest
+      securityContext:
+        privileged: true
+      script: |
+        #!/bin/sh
+        set -eu
+        eval "$(minikube docker-env)"
+        docker build -t quest-mode/backend:latest /workspace/source/backend
+    - name: build-frontend
+      image: cgr.dev/chainguard/docker-dind:latest
+      securityContext:
+        privileged: true
+      script: |
+        #!/bin/sh
+        set -eu
+        eval "$(minikube docker-env)"
+        docker build -t quest-mode/frontend:latest /workspace/source/frontend
+    - name: rollout-restart
+      image: cgr.dev/chainguard/kubectl:latest
+      script: |
+        #!/bin/sh
+        set -eu
+        kubectl rollout restart deployment -n quest-mode

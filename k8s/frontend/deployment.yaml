@@ -17,7 +17,7 @@ spec:
     spec:
       containers:
         - name: frontend
-          image: quest-mode-frontend:latest
+          image: quest-mode/frontend:latest
           imagePullPolicy: Never
           ports:
             - containerPort: 80

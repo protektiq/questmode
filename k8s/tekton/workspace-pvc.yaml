@@ -1,13 +1,13 @@
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: quest-mode-workspace
+  name: tekton-source-pvc
   namespace: quest-mode
   labels:
-    app.kubernetes.io/name: tekton-workspace
+    app: quest-mode-ci
 spec:
   accessModes:
     - ReadWriteOnce
   resources:
     requests:
-      storage: 1Gi
+      storage: 2Gi

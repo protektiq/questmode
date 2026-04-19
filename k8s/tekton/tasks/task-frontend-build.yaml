@@ -1,0 +1,32 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: frontend-build
+  namespace: quest-mode
+  labels:
+    app: quest-mode-ci
+spec:
+  workspaces:
+    - name: source
+  steps:
+    - name: npm-install
+      image: cgr.dev/chainguard/node:latest
+      workingDir: /workspace/source/frontend
+      script: |
+        #!/bin/sh
+        set -eu
+        npm ci
+    - name: tsc-check
+      image: cgr.dev/chainguard/node:latest
+      workingDir: /workspace/source/frontend
+      script: |
+        #!/bin/sh
+        set -eu
+        npx tsc --noEmit
+    - name: vite-build
+      image: cgr.dev/chainguard/node:latest
+      workingDir: /workspace/source/frontend
+      script: |
+        #!/bin/sh
+        set -eu
+        npm run build

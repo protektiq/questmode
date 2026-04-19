@@ -1,16 +1,19 @@
 apiVersion: tekton.dev/v1
 kind: PipelineRun
 metadata:
-  name: quest-mode-pipeline-run-sample
+  generateName: quest-mode-ci-run-
   namespace: quest-mode
   labels:
-    app.kubernetes.io/name: quest-tekton-pipelinerun
+    app: quest-mode-ci
 spec:
   pipelineRef:
-    name: quest-mode-pipeline
-  taskRunTemplate:
-    serviceAccountName: default
+    name: quest-mode-ci
+  params:
+    - name: repo-url
+      value: https://github.com/protektiq/questmode.git
+    - name: revision
+      value: main
   workspaces:
-    - name: shared-ws
+    - name: source
       persistentVolumeClaim:
-        claimName: quest-mode-workspace
+        claimName: tekton-source-pvc

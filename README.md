@@ -7,7 +7,7 @@ Monorepo: **Go/Gin** backend, **Vite/TypeScript** frontend, **Kubernetes** manif
 - `backend/` — Gin HTTP API (`cmd/`, `internal/`, `migrations/`, `go.mod`, `Dockerfile`)
 - `frontend/` — Vite + TypeScript static app (`Dockerfile` serves with nginx)
 - `k8s/` — Namespaced manifests (`quest-mode`), including Postgres, Redis, app Deployments/Services, Tekton, and secrets templates
-- `scripts/` — Helper scripts (e.g. image builds)
+- `scripts/` — Helper scripts (`build-images.sh` for local Docker; `build-all.sh` for Minikube’s Docker daemon plus rollout restart)
 
 ## Prerequisites
 
@@ -35,11 +35,13 @@ Run these from the repository root.
    eval $(minikube docker-env)
    ```
 
-   After this, build application images:
+   After this, build application images into Minikube and restart app Deployments:
 
    ```bash
-   ./scripts/build-images.sh
+   ./scripts/build-all.sh
    ```
+
+   To build images only (without Minikube’s Docker), use `./scripts/build-images.sh` from the repo root instead.
 
 3. **Create namespace**:
 
@@ -78,25 +80,77 @@ Run these from the repository root.
 kubectl get pods -n quest-mode -w
 ```
 
-**Smoke-test** with port-forwards:
+**Smoke-test** — either use the frontend **NodePort** on the Minikube node IP (port **30080**):
+
+```bash
+minikube ip
+# Then open http://<that-ip>:30080 — the UI loads and /api is proxied to the backend by nginx.
+```
+
+On Linux Docker driver environments (including WSL), direct access to `http://$(minikube ip):30080` may hang depending on host networking. In that case, use one of the local access methods below.
+
+Or use port-forwards:
 
 ```bash
 kubectl port-forward -n quest-mode svc/frontend 8081:80
 kubectl port-forward -n quest-mode svc/backend 8082:8080
 ```
 
-Then open `http://127.0.0.1:8081` and `http://127.0.0.1:8082/api/health`.
+Then open `http://127.0.0.1:8081` (same-origin `/api/health` via nginx) and, if needed, `http://127.0.0.1:8082/api/health` (curl -X GET http://127.0.0.1:8082/api/health) directly against the backend Service.
+
+Health checks through frontend proxy:
+
+```bash
+curl -X GET http://127.0.0.1:8081/api/health
+```
+
+Expected response:
+
+```json
+{"db":"ok","redis":"ok","status":"ok"}
+```
+
+Alternative local tunnel (keep command running in one terminal):
+
+```bash
+minikube service -n quest-mode frontend --url
+```
+
+Then curl the printed URL plus `/api/health` from another terminal.
 
 ## Tekton (optional)
 
-Install Tekton Pipelines on your cluster first (see [Tekton installation](https://tekton.dev/docs/installation/)). Then ensure `k8s/tekton/` resources are applied (included in step 5 with `kubectl apply -R -f k8s/`).
-
-The sample `PipelineRun` is named `quest-mode-pipeline-run-sample`. If you need to re-apply it after a change, delete it first:
+Install Tekton Pipelines and Triggers into Minikube:
 
 ```bash
-kubectl delete pipelinerun quest-mode-pipeline-run-sample -n quest-mode --ignore-not-found
-kubectl apply -f k8s/tekton/pipeline-run.yaml
+kubectl apply -f https://storage.googleapis.com/tekton-releases/pipeline/latest/release.yaml
+kubectl apply -f https://storage.googleapis.com/tekton-releases/triggers/latest/release.yaml
+kubectl wait --for=condition=Ready pods --all -n tekton-pipelines --timeout=120s
 ```
+
+Apply all Tekton resources for this repository:
+
+```bash
+kubectl apply -f k8s/tekton/tasks/ -n quest-mode
+kubectl apply -f k8s/tekton/pipeline.yaml -n quest-mode
+kubectl apply -f k8s/tekton/workspace-pvc.yaml -n quest-mode
+```
+
+Create a new pipeline run (the manifest uses `generateName` for unique run names):
+
+```bash
+kubectl create -f k8s/tekton/pipeline-run.yaml -n quest-mode
+```
+
+`k8s/tekton/pipeline-run.yaml` passes pipeline params for source checkout (`repo-url` and `revision`). Update `revision` if you want to run CI against a different branch/tag/SHA.
+
+Or use the helper script:
+
+```bash
+./scripts/run-ci.sh
+```
+
+The helper script deletes old runs labeled `app=quest-mode-ci`, creates a new run from `k8s/tekton/pipeline-run.yaml`, and streams logs with `tkn pipelinerun logs -n quest-mode --last -f`.
 
 ## Development (without Kubernetes)
 

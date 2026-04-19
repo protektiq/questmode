@@ -16,7 +16,7 @@ import (
 )
 
 const (
-	defaultPort     = "8080"
+	defaultPort      = "8080"
 	minConnStringLen = 8
 	maxConnStringLen = 2048
 )
@@ -79,7 +79,11 @@ func loadDotenvIfDev() error {
 	if strings.EqualFold(os.Getenv("ENV"), "production") {
 		return nil
 	}
-	return godotenv.Load()
+	err := godotenv.Load()
+	if err != nil && os.IsNotExist(err) {
+		return nil
+	}
+	return err
 }
 
 func requireEnv(key string) (string, error) {

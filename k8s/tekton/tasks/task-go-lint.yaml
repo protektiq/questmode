@@ -1,0 +1,25 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: go-lint
+  namespace: quest-mode
+  labels:
+    app: quest-mode-ci
+spec:
+  workspaces:
+    - name: source
+  steps:
+    - name: fmt-check
+      image: cgr.dev/chainguard/go:latest
+      workingDir: /workspace/source/backend
+      script: |
+        #!/bin/sh
+        set -eu
+        gofmt -l . | grep . && exit 1 || true
+    - name: vet
+      image: cgr.dev/chainguard/go:latest
+      workingDir: /workspace/source/backend
+      script: |
+        #!/bin/sh
+        set -eu
+        go vet ./...
