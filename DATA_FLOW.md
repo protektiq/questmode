@@ -77,3 +77,25 @@ flowchart LR
 - **Shared workspace**: `tekton-source-pvc` is mounted as the `source` workspace for all CI tasks.
 - **Quality gates**: `go-lint` runs `gofmt` and `go vet`; `go-test` and `frontend-build` run in parallel after lint passes.
 - **Deploy flow**: image build and deployment restart are handled separately by local script `./scripts/build-all.sh` against Minikube's Docker daemon.
+
+## Frontend reward flow
+
+```mermaid
+flowchart LR
+  questUi[QuestUI]
+  rewardEngine[RewardEngine]
+  cssLayer[CSSKeyframeLayer]
+  webAudio[WebAudioContext]
+  chapterBanner[ChapterBannerOverlay]
+  reducedMotion[ReducedMotionCheck]
+  questUi -->|trigger_correct_hint_chapter| rewardEngine
+  rewardEngine --> reducedMotion
+  reducedMotion -->|allow_animation| cssLayer
+  reducedMotion -->|allow_sound| webAudio
+  rewardEngine -->|chapter_complete| chapterBanner
+```
+
+- **Trigger points**: quest answer success triggers `correct`, hint button uses `hint`, and post-question chapter transition uses `chapter_complete`.
+- **Animation path**: RewardEngine injects a non-interactive overlay with bounded keyframe lifetimes (all under 1500ms) so user input focus remains available.
+- **Audio path**: RewardEngine creates short Web Audio oscillator effects (`chime`, `cheer`, `sparkle`) with gain envelopes for soft attack/release.
+- **Accessibility path**: if `prefers-reduced-motion` is enabled, animation is skipped and only non-hint sounds are played.

@@ -11,6 +11,7 @@ import {
   submitAnswer,
   submitBrainCheck,
 } from "./api";
+import { rewardEngine } from "./rewards";
 
 type QuestPhase = "chapter" | "question" | "spelling" | "math";
 type Difficulty = "easy" | "medium" | "hard";
@@ -57,9 +58,6 @@ const QUEST_CONSTANTS = {
   loop: {
     brainCheckEveryTasks: 5,
     breakAfterSeconds: 12 * 60,
-  },
-  rewardEvent: {
-    correct: "correct",
   },
   difficulty: {
     normal: "medium" as Difficulty,
@@ -117,14 +115,6 @@ const UI_TEXT = {
   validationErrorNumber: "Please enter a valid whole number.",
   apiErrorDefault: "Request failed.",
 } as const;
-
-const rewardEngine = {
-  trigger: (eventName: string) => {
-    window.dispatchEvent(
-      new CustomEvent("quest-reward", { detail: { event: eventName } }),
-    );
-  },
-};
 
 const sessionState: QuestSessionState = {
   learnerId: "",
@@ -295,6 +285,7 @@ const waitForFormSubmit = (
       usedHint = true;
       incrementProgress(QUEST_CONSTANTS.progress.hintIncrement);
       setFeedback(`${UI_TEXT.hintPrefix} ${hintText}`);
+      rewardEngine.trigger("hint");
     });
 
     form.addEventListener("submit", (event) => {
@@ -395,7 +386,7 @@ const runChapterQuestions = async (chapter: ChapterResponse): Promise<void> => {
         continue;
       }
 
-      rewardEngine.trigger(QUEST_CONSTANTS.rewardEvent.correct);
+      rewardEngine.trigger("correct");
       incrementProgress(QUEST_CONSTANTS.progress.correctIncrement);
       setFeedback(UI_TEXT.responseCorrect);
       await markTaskCompleted();
@@ -439,7 +430,7 @@ const runSpellingTask = async (): Promise<void> => {
       continue;
     }
 
-    rewardEngine.trigger(QUEST_CONSTANTS.rewardEvent.correct);
+    rewardEngine.trigger("correct");
     incrementProgress(QUEST_CONSTANTS.progress.correctIncrement);
     setFeedback(UI_TEXT.spellingCorrect);
     await markTaskCompleted();
@@ -496,7 +487,7 @@ const runMathTask = async (): Promise<void> => {
       continue;
     }
 
-    rewardEngine.trigger(QUEST_CONSTANTS.rewardEvent.correct);
+    rewardEngine.trigger("correct");
     incrementProgress(QUEST_CONSTANTS.progress.correctIncrement);
     setFeedback(UI_TEXT.mathCorrect);
     await markTaskCompleted();
@@ -556,6 +547,7 @@ const runQuestLoop = async (): Promise<void> => {
     renderChapter(chapter);
 
     await runChapterQuestions(chapter);
+    rewardEngine.trigger("chapter_complete");
     await runSpellingTask();
     await runMathTask();
   }
