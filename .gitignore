@@ -34,3 +34,6 @@ Thumbs.db
 *.swp
 *.swo
 *~
+
+# Local tool archives
+tkn_*_Linux_x86_64.tar.gz

@@ -50,12 +50,3 @@ spec:
       workspaces:
         - name: source
           workspace: source
-    - name: build
-      taskRef:
-        name: docker-build
-      runAfter:
-        - test
-        - fe
-      workspaces:
-        - name: source
-          workspace: source

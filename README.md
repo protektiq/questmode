@@ -136,6 +136,8 @@ kubectl apply -f k8s/tekton/pipeline.yaml -n quest-mode
 kubectl apply -f k8s/tekton/workspace-pvc.yaml -n quest-mode
 ```
 
+This local setup uses Tekton as a CI quality gate (`fetch-source`, `go-lint`, `go-test`, `frontend-build`) only. Container image builds and rollout restarts stay in the host-local Minikube flow via `./scripts/build-all.sh`.
+
 Create a new pipeline run (the manifest uses `generateName` for unique run names):
 
 ```bash

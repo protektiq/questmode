@@ -47,12 +47,9 @@ flowchart LR
   fetchTask --> lintTask[go_lint]
   lintTask --> testTask[go_test]
   lintTask --> feTask[frontend_build]
-  testTask --> buildTask[docker_build]
-  feTask --> buildTask
-  buildTask --> restartDeploy[kubectl_rollout_restart]
 ```
 
 - **Source fetch**: `fetch-source` validates `repo-url` and `revision`, then checks out the requested ref into the shared workspace.
 - **Shared workspace**: `tekton-source-pvc` is mounted as the `source` workspace for all CI tasks.
 - **Quality gates**: `go-lint` runs `gofmt` and `go vet`; `go-test` and `frontend-build` run in parallel after lint passes.
-- **Build and deploy refresh**: `docker-build` starts only after backend tests and frontend build succeed, then restarts Deployments in `quest-mode`.
+- **Deploy flow**: image build and deployment restart are handled separately by local script `./scripts/build-all.sh` against Minikube's Docker daemon.
