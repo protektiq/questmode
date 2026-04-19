@@ -51,11 +51,16 @@ Run these from the repository root.
 
    ```bash
    cp k8s/secrets/secrets.template.yaml k8s/secrets/secrets.yaml
-   # Edit k8s/secrets/secrets.yaml: set ANTHROPIC_API_KEY, ADMIN_KEY, and adjust URLs if needed.
+   # Edit k8s/secrets/secrets.yaml: set ANTHROPIC_API_KEY, ADMIN_KEY, POSTGRES_PASSWORD, and DATABASE_URL.
+   # Use the same DB password in POSTGRES_PASSWORD and in DATABASE_URL (same user/db as in k8s/postgres/configmap.yaml).
    kubectl apply -f k8s/secrets/
    ```
 
    `k8s/secrets/secrets.yaml` is gitignored; only the template is committed.
+
+   The Postgres Deployment reads `POSTGRES_USER`, `POSTGRES_PASSWORD`, and `POSTGRES_DB` from this Secret. Non-sensitive defaults (`POSTGRES_USER`, `POSTGRES_DB`) are duplicated in `k8s/postgres/configmap.yaml` for reference; keep those values in sync if you change them.
+
+   If you previously used the old PVC name `postgres-pvc`, switch to `quest-postgres-pvc` by deleting the old Postgres Deployment/PVC in Minikube (this wipes local DB data) or migrating the volume claim manually.
 
 5. **Apply all Kubernetes manifests** under `k8s/` (recursive — includes `postgres/`, `redis/`, `backend/`, `frontend/`, `tekton/`, etc.):
 
@@ -84,7 +89,7 @@ Then open `http://127.0.0.1:8081` and `http://127.0.0.1:8082/health`.
 
 ## Tekton (optional)
 
-Install Tekton Pipelines on your cluster first (see [Tekton installation](https://tekton.dev/docs/installation/)). Then ensure `k8s/tekton/` resources are applied (included in step 6 with `kubectl apply -R -f k8s/`).
+Install Tekton Pipelines on your cluster first (see [Tekton installation](https://tekton.dev/docs/installation/)). Then ensure `k8s/tekton/` resources are applied (included in step 5 with `kubectl apply -R -f k8s/`).
 
 The sample `PipelineRun` is named `quest-mode-pipeline-run-sample`. If you need to re-apply it after a change, delete it first:
 

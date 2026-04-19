@@ -1,7 +1,7 @@
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: postgres-pvc
+  name: quest-postgres-pvc
   namespace: quest-mode
   labels:
     app.kubernetes.io/name: postgres
