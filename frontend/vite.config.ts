@@ -7,6 +7,7 @@ export default defineConfig({
       input: {
         main: "index.html",
         quest: "quest.html",
+        progress: "progress.html",
       },
     },
   },

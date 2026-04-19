@@ -87,8 +87,9 @@ func main() {
 
 	state := &AppState{DB: pool, Redis: rdb}
 	storyHandler := handlers.NewStoryHandler(pool, rdb, buildClaudeClient())
+	progressHandler := handlers.NewProgressHandler(pool)
 	router := gin.Default()
-	registerRoutes(router, state, storyHandler)
+	registerRoutes(router, state, storyHandler, progressHandler)
 
 	port := os.Getenv("PORT")
 	if port == "" {
@@ -157,7 +158,7 @@ func openRedis(ctx context.Context, redisURL string) (*redis.Client, error) {
 	return client, nil
 }
 
-func registerRoutes(router *gin.Engine, state *AppState, storyHandler *handlers.StoryHandler) {
+func registerRoutes(router *gin.Engine, state *AppState, storyHandler *handlers.StoryHandler, progressHandler *handlers.ProgressHandler) {
 	api := router.Group("/api")
 
 	api.GET("/health", func(c *gin.Context) {
@@ -175,6 +176,7 @@ func registerRoutes(router *gin.Engine, state *AppState, storyHandler *handlers.
 
 	storyGroup := api.Group("/story")
 	storyHandler.RegisterStoryRoutes(storyGroup)
+	api.GET("/progress", progressHandler.GetProgress)
 
 	spellingGroup := api.Group("/spelling")
 	spellingGroup.GET("/word", func(c *gin.Context) {

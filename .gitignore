@@ -37,3 +37,6 @@ Thumbs.db
 
 # Local tool archives
 tkn_*_Linux_x86_64.tar.gz
+
+# Claude init file
+CLAUDE.md

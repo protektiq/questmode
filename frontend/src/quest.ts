@@ -1,12 +1,14 @@
 import {
   ApiError,
   type ChapterResponse,
+  type QuestBadge,
   type Question,
   checkMath,
   checkSpelling,
   getChapter,
   getMathProblem,
   getSpellingWord,
+  logWriting,
   startArc,
   submitAnswer,
   submitBrainCheck,
@@ -69,8 +71,10 @@ const QUEST_CONSTANTS = {
   },
   input: {
     minLength: 1,
+    writingMinLength: 20,
     maxAnswerLength: 500,
     maxWordLength: 256,
+    maxWritingLength: 20000,
   },
 } as const;
 
@@ -114,6 +118,16 @@ const UI_TEXT = {
   validationErrorLongInput: "Input is too long.",
   validationErrorNumber: "Please enter a valid whole number.",
   apiErrorDefault: "Request failed.",
+  arcCompleteHeading: "Quest complete!",
+  arcCompleteNewQuest: "New quest",
+  arcCompleteViewProgress: "View progress",
+  arcCompleteBadgePrefix: "Genre",
+  writingPromptHeading: "What do you think happens next?",
+  writingPromptHint: "Share your prediction in at least 20 characters.",
+  writingPromptPlaceholder: "Write your idea for what happens next...",
+  writingPromptSubmit: "Save and continue",
+  writingPromptTooShort: "Please write at least 20 characters.",
+  writingPromptSaved: "Great idea saved!",
 } as const;
 
 const sessionState: QuestSessionState = {
@@ -237,9 +251,13 @@ const markTaskCompleted = async (): Promise<void> => {
   );
 };
 
-const validateFreeText = (rawValue: string, maxLength: number): string => {
+const validateFreeText = (
+  rawValue: string,
+  maxLength: number,
+  minLength = QUEST_CONSTANTS.input.minLength,
+): string => {
   const value = rawValue.trim();
-  if (value.length < QUEST_CONSTANTS.input.minLength) {
+  if (value.length < minLength) {
     throw new Error(UI_TEXT.validationErrorEmptyInput);
   }
   if (value.length > maxLength) {
@@ -251,7 +269,62 @@ const validateFreeText = (rawValue: string, maxLength: number): string => {
 const renderShell = (): void => {
   document.title = UI_TEXT.documentTitle;
   const app = getRequiredElement<HTMLDivElement>(QUEST_CONSTANTS.dom.rootId);
-  app.innerHTML = `<main style="font-family: system-ui, sans-serif; max-width: 50rem; margin: 2rem auto; padding: 0 1rem;">
+  app.innerHTML = `<style>
+    @keyframes questBadgePulse {
+      0%, 100% { transform: scale(1) rotate(0deg); }
+      50% { transform: scale(1.08) rotate(5deg); }
+    }
+    .questOverlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(15, 23, 42, 0.95);
+      display: grid;
+      place-items: center;
+      z-index: 999;
+      padding: 1.5rem;
+    }
+    .questOverlayCard {
+      width: min(34rem, 100%);
+      text-align: center;
+      background: #111827;
+      border: 1px solid #334155;
+      border-radius: 1rem;
+      padding: 2rem 1.5rem;
+      color: #f8fafc;
+    }
+    .questBadgeStar {
+      width: 10rem;
+      height: 10rem;
+      margin: 0 auto 1rem;
+      background: linear-gradient(135deg, #fbbf24, #f59e0b);
+      clip-path: polygon(50% 0%, 61% 35%, 98% 35%, 69% 57%, 79% 91%, 50% 70%, 21% 91%, 31% 57%, 2% 35%, 39% 35%);
+      display: grid;
+      place-items: center;
+      font-weight: 700;
+      color: #1f2937;
+      text-transform: uppercase;
+      animation: questBadgePulse 1.8s ease-in-out infinite;
+      padding: 1rem;
+    }
+    .questOverlayActions {
+      display: flex;
+      gap: 0.75rem;
+      justify-content: center;
+      flex-wrap: wrap;
+      margin-top: 1rem;
+    }
+    .questOverlayActions button,
+    .questOverlayActions a {
+      border-radius: 0.6rem;
+      border: 1px solid #475569;
+      padding: 0.6rem 1rem;
+      text-decoration: none;
+      color: #f8fafc;
+      background: #1e293b;
+      cursor: pointer;
+    }
+  </style>
+  <main style="font-family: system-ui, sans-serif; max-width: 50rem; margin: 2rem auto; padding: 0 1rem;">
     <h1>${escapeHtml(UI_TEXT.heading)}</h1>
     <p id="${QUEST_CONSTANTS.dom.statusId}" role="status" aria-live="polite">${escapeHtml(UI_TEXT.loading)}</p>
     <label for="${QUEST_CONSTANTS.dom.progressId}">${escapeHtml(UI_TEXT.progressLabelPrefix)}</label>
@@ -320,6 +393,86 @@ const renderTextPrompt = async (params: {
   `;
 
   return waitForFormSubmit(formId, inputId, hintButtonId, params.hintText);
+};
+
+const showWritingPromptIfNeeded = async (): Promise<void> => {
+  if (sessionState.chapterIndex % 3 !== 0) {
+    return;
+  }
+  const taskElement = getRequiredElement<HTMLElement>(QUEST_CONSTANTS.dom.taskId);
+  const formId = "writing-form";
+  const textAreaId = "writing-input";
+  const validationId = "writing-validation";
+  taskElement.innerHTML = `
+    <h3>${escapeHtml(UI_TEXT.writingPromptHeading)}</h3>
+    <p>${escapeHtml(UI_TEXT.writingPromptHint)}</p>
+    <form id="${formId}">
+      <label for="${textAreaId}">${escapeHtml(UI_TEXT.writingPromptHeading)}</label>
+      <textarea id="${textAreaId}" rows="5" placeholder="${escapeHtml(UI_TEXT.writingPromptPlaceholder)}" aria-label="${escapeHtml(UI_TEXT.writingPromptHeading)}"></textarea>
+      <p id="${validationId}" role="status" aria-live="polite"></p>
+      <button type="submit">${escapeHtml(UI_TEXT.writingPromptSubmit)}</button>
+    </form>
+  `;
+
+  await new Promise<void>((resolve) => {
+    const form = getRequiredElement<HTMLFormElement>(formId);
+    const textArea = getRequiredElement<HTMLTextAreaElement>(textAreaId);
+    const validation = getRequiredElement<HTMLParagraphElement>(validationId);
+
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      try {
+        const safeText = validateFreeText(
+          textArea.value,
+          QUEST_CONSTANTS.input.maxWritingLength,
+          QUEST_CONSTANTS.input.writingMinLength,
+        );
+        await logWriting(sessionState.learnerId, sessionState.sessionId, safeText);
+        setFeedback(UI_TEXT.writingPromptSaved);
+        resolve();
+      } catch (error) {
+        if (error instanceof ApiError || error instanceof Error) {
+          validation.textContent =
+            textArea.value.trim().length < QUEST_CONSTANTS.input.writingMinLength
+              ? UI_TEXT.writingPromptTooShort
+              : error.message;
+          return;
+        }
+        validation.textContent = UI_TEXT.apiErrorDefault;
+      }
+    });
+  });
+};
+
+const showArcCompletionOverlay = async (badge: QuestBadge | null): Promise<void> => {
+  const root = getRequiredElement<HTMLDivElement>(QUEST_CONSTANTS.dom.rootId);
+  const overlay = document.createElement("section");
+  overlay.className = "questOverlay";
+  overlay.setAttribute("role", "dialog");
+  overlay.setAttribute("aria-label", UI_TEXT.arcCompleteHeading);
+  const genreLabel = badge?.genre?.trim() || sessionState.genre;
+  overlay.innerHTML = `
+    <div class="questOverlayCard">
+      <div class="questBadgeStar">${escapeHtml(genreLabel)}</div>
+      <h2>${escapeHtml(UI_TEXT.arcCompleteHeading)}</h2>
+      <p>${escapeHtml(`${UI_TEXT.arcCompleteBadgePrefix}: ${genreLabel}`)}</p>
+      <div class="questOverlayActions">
+        <button type="button" id="quest-new-arc">${escapeHtml(UI_TEXT.arcCompleteNewQuest)}</button>
+        <a href="/progress.html" id="quest-view-progress">${escapeHtml(UI_TEXT.arcCompleteViewProgress)}</a>
+      </div>
+    </div>
+  `;
+  root.appendChild(overlay);
+  rewardEngine.trigger("chapter_complete");
+
+  await new Promise<void>((resolve) => {
+    const newQuestButton = getRequiredElement<HTMLButtonElement>("quest-new-arc");
+    newQuestButton.addEventListener("click", async () => {
+      overlay.remove();
+      await initializeSession();
+      resolve();
+    });
+  });
 };
 
 const askBrainCheckChoice = async (): Promise<BrainCheckChoice> => {
@@ -547,8 +700,14 @@ const runQuestLoop = async (): Promise<void> => {
     renderChapter(chapter);
 
     await runChapterQuestions(chapter);
-    rewardEngine.trigger("chapter_complete");
+    if (chapter.arc_complete) {
+      await showArcCompletionOverlay(chapter.badge);
+      setStatus(UI_TEXT.statusReady);
+      setFeedback("");
+      continue;
+    }
     await runSpellingTask();
+    await showWritingPromptIfNeeded();
     await runMathTask();
   }
 };

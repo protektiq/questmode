@@ -66,6 +66,20 @@ func Save(state StoryState, rdb *redis.Client) error {
 	return nil
 }
 
+func Delete(learnerID string, rdb *redis.Client) error {
+	learnerID = strings.TrimSpace(learnerID)
+	if err := validateIdentifier("learner_id", learnerID); err != nil {
+		return err
+	}
+	if rdb == nil {
+		return errors.New("redis client is required")
+	}
+	if err := rdb.Del(context.Background(), storyStateKey(learnerID)).Err(); err != nil {
+		return fmt.Errorf("delete story state from redis: %w", err)
+	}
+	return nil
+}
+
 func FlushToDB(state StoryState, db *pgxpool.Pool) error {
 	state.SessionID = strings.TrimSpace(state.SessionID)
 	if err := validateIdentifier("session_id", state.SessionID); err != nil {

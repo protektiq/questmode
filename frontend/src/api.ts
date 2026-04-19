@@ -10,10 +10,20 @@ export interface Question {
   hint: string;
 }
 
+export interface QuestBadge {
+  id: string;
+  arc_id: string;
+  learner_id: string;
+  genre: string;
+  earned_at: string;
+}
+
 export interface ChapterResponse {
   chapter_id: string;
   content: string;
   questions: Question[];
+  arc_complete: boolean;
+  badge: QuestBadge | null;
 }
 
 export interface AnswerResult {
@@ -63,18 +73,68 @@ export interface BrainCheckResult {
   next_difficulty: "normal" | "easier";
 }
 
+export interface WritingLogResult {
+  saved: boolean;
+  word_count: number;
+}
+
+export interface ProgressSessionDay {
+  date: string;
+  tasks_completed: number;
+  engagement_seconds: number;
+}
+
+export interface ProgressSpellingWord {
+  word: string;
+  mastered: boolean;
+  last_seen_at?: string;
+}
+
+export interface ProgressSpellingData {
+  total: number;
+  mastered: number;
+  words: ProgressSpellingWord[];
+}
+
+export interface ProgressMathByType {
+  problem_type: string;
+  attempts: number;
+  correct_rate: number;
+}
+
+export interface ProgressMathData {
+  total_attempts: number;
+  correct_rate: number;
+  by_problem_type: ProgressMathByType[];
+}
+
+export interface ProgressQuestArc {
+  arc_id: string;
+  title: string;
+  status: string;
+  chapters_completed: number;
+}
+
+export interface ProgressBadge {
+  badge_code: string;
+  earned_at: string;
+}
+
+export interface ProgressBrainCheck {
+  recorded_at: string;
+  response: string;
+  emoji: string;
+}
+
 export interface ProgressData {
   learner_id: string;
-  session_id: string;
-  arc_id: string;
-  genre: string;
-  chapter_index: number;
-  active_spelling_word: string;
-  brain_check_frustrated: boolean;
-  engagement_seconds: number;
-  break_offered: boolean;
-  last_chapter_summary: string;
-  phase: string;
+  sessions: ProgressSessionDay[];
+  spelling: ProgressSpellingData;
+  math: ProgressMathData;
+  quest_arcs: ProgressQuestArc[];
+  quest_badges: ProgressBadge[];
+  weekly_words_typed: number;
+  brain_checks: ProgressBrainCheck[];
 }
 
 interface ApiErrorBody {
@@ -98,6 +158,8 @@ const API_CONSTANTS = {
     getMathProblem: "/api/math/problem",
     checkMath: "/api/math/check",
     submitBrainCheck: "/api/story/brain-check",
+    logWriting: "/api/story/writing-log",
+    getProgress: "/api/progress",
   },
   limits: {
     idMaxLength: 128,
@@ -106,6 +168,8 @@ const API_CONSTANTS = {
     brainCheckResponseMaxLength: 64,
     mathSessionIdMaxLength: 128,
     mathProblemIdMaxLength: 64,
+    writingMinLength: 20,
+    writingMaxLength: 20000,
   },
 } as const;
 
@@ -253,6 +317,19 @@ const isQuestion = (value: unknown): value is Question => {
   return isString(value.q) && isString(value.hint);
 };
 
+const isQuestBadge = (value: unknown): value is QuestBadge => {
+  if (!isRecord(value)) {
+    return false;
+  }
+  return (
+    isString(value.id) &&
+    isString(value.arc_id) &&
+    isString(value.learner_id) &&
+    isString(value.genre) &&
+    isString(value.earned_at)
+  );
+};
+
 const isArcStarted = (value: unknown): value is ArcStarted => {
   if (!isRecord(value)) {
     return false;
@@ -273,7 +350,9 @@ const isChapterResponse = (value: unknown): value is ChapterResponse => {
     isString(value.chapter_id) &&
     isString(value.content) &&
     Array.isArray(value.questions) &&
-    value.questions.every(isQuestion)
+    value.questions.every(isQuestion) &&
+    isBoolean(value.arc_complete) &&
+    (value.badge === null || isQuestBadge(value.badge))
   );
 };
 
@@ -367,6 +446,118 @@ const isBrainCheckResult = (value: unknown): value is BrainCheckResult => {
   return (
     isBoolean(value.acknowledged) &&
     (value.next_difficulty === "normal" || value.next_difficulty === "easier")
+  );
+};
+
+const isWritingLogResult = (value: unknown): value is WritingLogResult => {
+  if (!isRecord(value)) {
+    return false;
+  }
+  return isBoolean(value.saved) && isNumber(value.word_count);
+};
+
+const isProgressSessionDay = (value: unknown): value is ProgressSessionDay => {
+  if (!isRecord(value)) {
+    return false;
+  }
+  return (
+    isString(value.date) &&
+    isNumber(value.tasks_completed) &&
+    isNumber(value.engagement_seconds)
+  );
+};
+
+const isProgressSpellingWord = (value: unknown): value is ProgressSpellingWord => {
+  if (!isRecord(value)) {
+    return false;
+  }
+  const optionalLastSeen =
+    value.last_seen_at === undefined || isString(value.last_seen_at);
+  return isString(value.word) && isBoolean(value.mastered) && optionalLastSeen;
+};
+
+const isProgressSpellingData = (value: unknown): value is ProgressSpellingData => {
+  if (!isRecord(value)) {
+    return false;
+  }
+  return (
+    isNumber(value.total) &&
+    isNumber(value.mastered) &&
+    Array.isArray(value.words) &&
+    value.words.every(isProgressSpellingWord)
+  );
+};
+
+const isProgressMathByType = (value: unknown): value is ProgressMathByType => {
+  if (!isRecord(value)) {
+    return false;
+  }
+  return (
+    isString(value.problem_type) &&
+    isNumber(value.attempts) &&
+    isNumber(value.correct_rate)
+  );
+};
+
+const isProgressMathData = (value: unknown): value is ProgressMathData => {
+  if (!isRecord(value)) {
+    return false;
+  }
+  return (
+    isNumber(value.total_attempts) &&
+    isNumber(value.correct_rate) &&
+    Array.isArray(value.by_problem_type) &&
+    value.by_problem_type.every(isProgressMathByType)
+  );
+};
+
+const isProgressQuestArc = (value: unknown): value is ProgressQuestArc => {
+  if (!isRecord(value)) {
+    return false;
+  }
+  return (
+    isString(value.arc_id) &&
+    isString(value.title) &&
+    isString(value.status) &&
+    isNumber(value.chapters_completed)
+  );
+};
+
+const isProgressBadge = (value: unknown): value is ProgressBadge => {
+  if (!isRecord(value)) {
+    return false;
+  }
+  return isString(value.badge_code) && isString(value.earned_at);
+};
+
+const isProgressBrainCheck = (value: unknown): value is ProgressBrainCheck => {
+  if (!isRecord(value)) {
+    return false;
+  }
+  return (
+    isString(value.recorded_at) &&
+    isString(value.response) &&
+    isString(value.emoji)
+  );
+};
+
+const isProgressData = (value: unknown): value is ProgressData => {
+  if (!isRecord(value)) {
+    return false;
+  }
+  return (
+    isString(value.learner_id) &&
+    Array.isArray(value.sessions) &&
+    value.sessions.every(isProgressSessionDay) &&
+    isProgressSpellingData(value.spelling) &&
+    isProgressMathData(value.math) &&
+    Array.isArray(value.quest_arcs) &&
+    value.quest_arcs.every(isProgressQuestArc) &&
+    Array.isArray(value.quest_badges) &&
+    value.quest_badges.every(isProgressBadge) &&
+    isNumber(value.weekly_words_typed) &&
+    Array.isArray(value.brain_checks) &&
+    value.brain_checks.every(isProgressBrainCheck)
   );
 };
 
@@ -574,4 +765,40 @@ export const submitBrainCheck = async (
     },
     isBrainCheckResult,
   );
+};
+
+export const logWriting = async (
+  learnerId: string,
+  sessionId: string,
+  text: string,
+): Promise<WritingLogResult> => {
+  const safeLearnerId = validateUuidLike(learnerId, "learnerId");
+  const safeSessionId = validateUuidLike(sessionId, "sessionId");
+  const safeText = validateTextInput(
+    text,
+    "text",
+    API_CONSTANTS.limits.writingMinLength,
+    API_CONSTANTS.limits.writingMaxLength,
+  );
+
+  return requestJson<WritingLogResult>(
+    API_CONSTANTS.paths.logWriting,
+    {
+      method: API_CONSTANTS.methods.post,
+      headers: { "Content-Type": API_CONSTANTS.contentTypeJson },
+      body: JSON.stringify({
+        learner_id: safeLearnerId,
+        session_id: safeSessionId,
+        text: safeText,
+      }),
+    },
+    isWritingLogResult,
+  );
+};
+
+export const getProgress = async (learnerId: string): Promise<ProgressData> => {
+  const safeLearnerId = validateUuidLike(learnerId, "learnerId");
+  const params = new URLSearchParams({ learner_id: safeLearnerId });
+  const path = `${API_CONSTANTS.paths.getProgress}?${params.toString()}`;
+  return requestJson<ProgressData>(path, { method: API_CONSTANTS.methods.get }, isProgressData);
 };

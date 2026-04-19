@@ -18,7 +18,7 @@ spec:
       initContainers:
         # BusyBox from Docker Hub: pulls reliably in Minikube; Chainguard wait-for-it often hits ErrImagePull if cgr.dev is unreachable or rate-limited.
         - name: wait-for-postgres
-          image: docker.io/library/busybox:1.36
+          image: cgr.dev/chainguard/busybox:latest
           imagePullPolicy: IfNotPresent
           command:
             - sh
@@ -33,7 +33,7 @@ spec:
               echo "timeout waiting for postgres:5432" >&2
               exit 1
         - name: wait-for-redis
-          image: docker.io/library/busybox:1.36
+          image: cgr.dev/chainguard/busybox:latest
           imagePullPolicy: IfNotPresent
           command:
             - sh

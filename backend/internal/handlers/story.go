@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -21,7 +23,10 @@ const (
 	maxGenreLength      = 64
 	maxAnswerLength     = 500
 	maxResponseLength   = 64
+	minWritingTextChars = 20
+	maxWritingTextChars = 20000
 	maxQuestionAttempts = 2
+	defaultArcLength    = 10
 )
 
 type StoryHandler struct {
@@ -45,9 +50,31 @@ type BrainCheckRequest struct {
 	Response  string `json:"response"`
 }
 
+type WritingLogRequest struct {
+	LearnerID string `json:"learner_id"`
+	SessionID string `json:"session_id"`
+	Text      string `json:"text"`
+}
+
 type chapterQuestionPublic struct {
 	Q    string `json:"q"`
 	Hint string `json:"hint"`
+}
+
+type questBadge struct {
+	ID        string `json:"id"`
+	ArcID     string `json:"arc_id"`
+	LearnerID string `json:"learner_id"`
+	Genre     string `json:"genre"`
+	EarnedAt  string `json:"earned_at"`
+}
+
+type chapterResponse struct {
+	ChapterID   string                  `json:"chapter_id"`
+	Content     string                  `json:"content"`
+	Questions   []chapterQuestionPublic `json:"questions"`
+	ArcComplete bool                    `json:"arc_complete"`
+	Badge       *questBadge             `json:"badge"`
 }
 
 type answerMeta struct {
@@ -70,6 +97,7 @@ func (h *StoryHandler) RegisterStoryRoutes(group *gin.RouterGroup) {
 	group.GET("/chapter", h.GetChapter)
 	group.POST("/answer", h.SubmitAnswer)
 	group.POST("/brain-check", h.BrainCheck)
+	group.POST("/writing-log", h.LogWriting)
 	group.GET("/status", h.GetStatus)
 }
 
@@ -180,6 +208,7 @@ func (h *StoryHandler) GetChapter(c *gin.Context) {
 	}
 
 	nextChapterIndex := state.ChapterIndex + 1
+	arcLength := getArcLength()
 	var chapterID string
 	err = h.DB.QueryRow(
 		c.Request.Context(),
@@ -199,10 +228,6 @@ func (h *StoryHandler) GetChapter(c *gin.Context) {
 	state.ChapterIndex = nextChapterIndex
 	state.LastChapterSummary = chapterData.Chapter
 	state.Phase = story.PhaseQuestion
-	if err := story.Save(state, h.Redis); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to save story state"})
-		return
-	}
 
 	meta := answerMeta{
 		ChapterID:            chapterID,
@@ -215,6 +240,29 @@ func (h *StoryHandler) GetChapter(c *gin.Context) {
 		return
 	}
 
+	arcComplete := state.ChapterIndex >= arcLength
+	var earnedBadge *questBadge
+	if arcComplete {
+		earnedBadge, err = h.completeArc(c.Request.Context(), state)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to complete arc"})
+			return
+		}
+		if err := story.Delete(learnerID, h.Redis); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to clear story state"})
+			return
+		}
+		if err := h.Redis.Del(c.Request.Context(), h.answerMetaKey(learnerID)).Err(); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to clear answer state"})
+			return
+		}
+	} else {
+		if err := story.Save(state, h.Redis); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to save story state"})
+			return
+		}
+	}
+
 	publicQuestions := make([]chapterQuestionPublic, 0, len(chapterData.Questions))
 	for _, q := range chapterData.Questions {
 		publicQuestions = append(publicQuestions, chapterQuestionPublic{
@@ -223,10 +271,12 @@ func (h *StoryHandler) GetChapter(c *gin.Context) {
 		})
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"chapter_id": chapterID,
-		"content":    chapterData.Chapter,
-		"questions":  publicQuestions,
+	c.JSON(http.StatusOK, chapterResponse{
+		ChapterID:   chapterID,
+		Content:     chapterData.Chapter,
+		Questions:   publicQuestions,
+		ArcComplete: arcComplete,
+		Badge:       earnedBadge,
 	})
 }
 
@@ -476,6 +526,74 @@ func (h *StoryHandler) GetStatus(c *gin.Context) {
 	})
 }
 
+func (h *StoryHandler) LogWriting(c *gin.Context) {
+	var req WritingLogRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
+		return
+	}
+
+	req.LearnerID = strings.TrimSpace(req.LearnerID)
+	req.SessionID = strings.TrimSpace(req.SessionID)
+	req.Text = strings.TrimSpace(req.Text)
+
+	if req.LearnerID == "" || req.SessionID == "" || req.Text == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "learner_id, session_id, and text are required"})
+		return
+	}
+	if len(req.Text) < minWritingTextChars || len(req.Text) > maxWritingTextChars {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "text must be between 20 and 20000 characters"})
+		return
+	}
+	if _, err := uuid.Parse(req.LearnerID); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "learner_id must be a valid uuid"})
+		return
+	}
+	if _, err := uuid.Parse(req.SessionID); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "session_id must be a valid uuid"})
+		return
+	}
+
+	wordCount := len(strings.Fields(req.Text))
+	if wordCount <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "text must contain at least one word"})
+		return
+	}
+
+	cmdTag, err := h.DB.Exec(
+		c.Request.Context(),
+		`INSERT INTO writing_logs (learner_id, session_id, text, word_count, logged_at)
+		 SELECT
+		   $1::uuid,
+		   qs.id,
+		   $3,
+		   $4,
+		   now()
+		 FROM quest_sessions qs
+		 WHERE qs.learner_id = $1::uuid
+		   AND (qs.id = $2::uuid OR qs.session_id = $2::text)
+		 ORDER BY qs.started_at DESC
+		 LIMIT 1`,
+		req.LearnerID,
+		req.SessionID,
+		req.Text,
+		wordCount,
+	)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to save writing log"})
+		return
+	}
+	if cmdTag.RowsAffected() == 0 {
+		c.JSON(http.StatusNotFound, gin.H{"error": "session not found for learner"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"saved":      true,
+		"word_count": wordCount,
+	})
+}
+
 func (h *StoryHandler) answerMetaKey(learnerID string) string {
 	return "story:answer-meta:" + learnerID
 }
@@ -502,4 +620,52 @@ func (h *StoryHandler) saveAnswerMeta(ctx context.Context, learnerID string, met
 		return err
 	}
 	return h.Redis.Set(ctx, h.answerMetaKey(learnerID), payload, 24*time.Hour).Err()
+}
+
+func getArcLength() int {
+	raw := strings.TrimSpace(os.Getenv("ARC_LENGTH"))
+	if raw == "" {
+		return defaultArcLength
+	}
+	parsed, err := strconv.Atoi(raw)
+	if err != nil || parsed <= 0 {
+		return defaultArcLength
+	}
+	return parsed
+}
+
+func (h *StoryHandler) completeArc(ctx context.Context, state story.StoryState) (*questBadge, error) {
+	tx, err := h.DB.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+
+	if _, err := tx.Exec(
+		ctx,
+		`UPDATE quest_arcs
+		 SET status = 'completed', completed_at = now()
+		 WHERE id = $1::uuid`,
+		state.ArcID,
+	); err != nil {
+		return nil, err
+	}
+
+	badge := &questBadge{}
+	if err := tx.QueryRow(
+		ctx,
+		`INSERT INTO quest_badges (arc_id, learner_id, genre, earned_at)
+		 VALUES ($1::uuid, $2::uuid, $3, now())
+		 RETURNING id::text, arc_id::text, learner_id::text, genre, to_char(earned_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')`,
+		state.ArcID,
+		state.LearnerID,
+		state.Genre,
+	).Scan(&badge.ID, &badge.ArcID, &badge.LearnerID, &badge.Genre, &badge.EarnedAt); err != nil {
+		return nil, err
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return badge, nil
 }
