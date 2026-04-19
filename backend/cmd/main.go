@@ -2,29 +2,46 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/joho/godotenv"
 	"github.com/redis/go-redis/v9"
+	"questmode/backend/internal/claude"
+	"questmode/backend/internal/handlers"
 	"questmode/backend/internal/migrate"
+	"questmode/backend/internal/spelling"
 )
 
 const (
 	defaultPort      = "8080"
 	minConnStringLen = 8
 	maxConnStringLen = 2048
+	maxAnswerLen     = 256
+	maxSeedWords     = 500
 )
 
 // AppState holds shared infrastructure for HTTP handlers.
 type AppState struct {
 	DB    *pgxpool.Pool
 	Redis *redis.Client
+}
+
+type spellingCheckRequest struct {
+	WordID string `json:"word_id"`
+	Answer string `json:"answer"`
+}
+
+type spellingSeedRequest struct {
+	Words []string `json:"words"`
 }
 
 func main() {
@@ -60,8 +77,9 @@ func main() {
 	}
 
 	state := &AppState{DB: pool, Redis: rdb}
+	storyHandler := handlers.NewStoryHandler(pool, rdb, buildClaudeClient())
 	router := gin.Default()
-	registerRoutes(router, state)
+	registerRoutes(router, state, storyHandler)
 
 	port := os.Getenv("PORT")
 	if port == "" {
@@ -130,8 +148,10 @@ func openRedis(ctx context.Context, redisURL string) (*redis.Client, error) {
 	return client, nil
 }
 
-func registerRoutes(router *gin.Engine, state *AppState) {
-	router.GET("/api/health", func(c *gin.Context) {
+func registerRoutes(router *gin.Engine, state *AppState, storyHandler *handlers.StoryHandler) {
+	api := router.Group("/api")
+
+	api.GET("/health", func(c *gin.Context) {
 		dbSt, rdsSt, overall := probeDeps(c.Request.Context(), state)
 		code := http.StatusOK
 		if overall != "ok" {
@@ -143,6 +163,120 @@ func registerRoutes(router *gin.Engine, state *AppState) {
 			"redis":  rdsSt,
 		})
 	})
+
+	storyGroup := api.Group("/story")
+	storyHandler.RegisterStoryRoutes(storyGroup)
+
+	spellingGroup := api.Group("/spelling")
+	spellingGroup.GET("/word", func(c *gin.Context) {
+		learnerID, err := resolveLatestLearnerID(c.Request.Context(), state.DB)
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				c.JSON(http.StatusNotFound, gin.H{"error": "no session found"})
+				return
+			}
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to resolve learner session"})
+			return
+		}
+
+		word, err := spelling.GetActiveWord(c.Request.Context(), learnerID, state.DB)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load active spelling word"})
+			return
+		}
+		if word.ID == "" {
+			c.JSON(http.StatusNotFound, gin.H{"error": "no active spelling word"})
+			return
+		}
+		c.JSON(http.StatusOK, word)
+	})
+
+	spellingGroup.POST("/check", func(c *gin.Context) {
+		var req spellingCheckRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
+			return
+		}
+		req.WordID = strings.TrimSpace(req.WordID)
+		req.Answer = strings.TrimSpace(req.Answer)
+		if req.WordID == "" || req.Answer == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "word_id and answer are required"})
+			return
+		}
+		if len(req.Answer) > maxAnswerLen {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "answer exceeds max length"})
+			return
+		}
+
+		learnerID, err := resolveLatestLearnerID(c.Request.Context(), state.DB)
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				c.JSON(http.StatusNotFound, gin.H{"error": "no session found"})
+				return
+			}
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to resolve learner session"})
+			return
+		}
+
+		result, err := spelling.CheckAnswer(c.Request.Context(), learnerID, req.WordID, req.Answer, state.DB)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, result)
+	})
+
+	spellingGroup.POST("/seed", func(c *gin.Context) {
+		adminKey := strings.TrimSpace(os.Getenv("ADMIN_KEY"))
+		if adminKey == "" {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "admin key is not configured"})
+			return
+		}
+		if strings.TrimSpace(c.GetHeader("X-Admin-Key")) != adminKey {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+			return
+		}
+
+		var req spellingSeedRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
+			return
+		}
+		if len(req.Words) > maxSeedWords {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "word list exceeds max size"})
+			return
+		}
+
+		learnerID, err := resolveLatestLearnerID(c.Request.Context(), state.DB)
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				c.JSON(http.StatusNotFound, gin.H{"error": "no session found"})
+				return
+			}
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to resolve learner session"})
+			return
+		}
+
+		if err := spelling.SeedWordList(c.Request.Context(), learnerID, req.Words, state.DB); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"seeded": true})
+	})
+}
+
+func resolveLatestLearnerID(ctx context.Context, db *pgxpool.Pool) (string, error) {
+	var learnerID string
+	err := db.QueryRow(ctx, `
+		SELECT learner_id::text
+		FROM quest_sessions
+		ORDER BY started_at DESC
+		LIMIT 1
+	`).Scan(&learnerID)
+	if err != nil {
+		return "", err
+	}
+	return learnerID, nil
 }
 
 func probeDeps(ctx context.Context, state *AppState) (dbStatus, redisStatus, overall string) {
@@ -166,4 +300,17 @@ func probeDeps(ctx context.Context, state *AppState) (dbStatus, redisStatus, ove
 		overall = "degraded"
 	}
 	return dbStatus, redisStatus, overall
+}
+
+func buildClaudeClient() *claude.ClaudeClient {
+	apiKey := strings.TrimSpace(os.Getenv("CLAUDE_API_KEY"))
+	if apiKey == "" {
+		return nil
+	}
+	client, err := claude.NewClaudeClient(apiKey)
+	if err != nil {
+		log.Printf("claude client disabled: %v", err)
+		return nil
+	}
+	return client
 }
